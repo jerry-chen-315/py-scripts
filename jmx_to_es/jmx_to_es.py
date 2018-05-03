@@ -53,7 +53,6 @@ class Jmxes:
 
     def fetchAttrs(self, rawname):
         attrs = []
-        #try:
         name = javax.management.ObjectName(rawname)
         info = self.mbeanConnection.getMBeanInfo(name)
         for attr in info.getAttributes():
@@ -68,25 +67,14 @@ class Jmxes:
         if 'value' in dir(metric):
             return metric.value
         elif 'contents' in dir(metric):
-		    values_dict={}
-			for key in metric.contents:
-			    values_dict[key]=metric.get(key)
+            values_dict={}
+            for key in metric.contents:
+                values_dict[key]=metric.get(key)
             return values_dict
 
 def load_JVM():
     jpype.startJVM(jpype.getDefaultJVMPath())
     java.lang.System.out.println("JVM load OK ...")
-
-
-def table(mbeanName):
-    return re.findall(r'name=\w+$', str(mbeanName))[0].split('=')[-1]
-
-
-def tables(mbeanSet):
-    tables = {}
-    for mbean in mbeanSet:
-        tables[str(mbean.name)] = table(mbean.name)
-    return tables
 
 def writeES(metric_doc,section):
     esnode=json.loads(pars.get(section,"esnode"))
@@ -98,19 +86,18 @@ def writeES(metric_doc,section):
     es.indices.refresh(index=index_name)
     return
 
-def loop(interval,hosts,port,mbean_dict,section):
+def loop(interval,jconn_dict,mbean_dict,section):
     while(True):
         result_list = []
         metric_dict = {}
-        timestamp=datetime.now()
-        for host in hosts:
-            jconn = Jmxes(host,port)
+        timestamp=datetime.utcnow()
+        for hostname,jconn in jconn_dict.items():
             for rawname in mbean_dict:
                 for attrname in mbean_dict[rawname]:
                     tmp_name=re.sub(r"[.|:]","_",rawname)
                     metric_dict=dict(item.split("=") for item in tmp_name.split(","))
                     metric_dict[attrname]=jconn.fetchAttr(rawname, attrname)
-                    metric_dict['hostname']=host
+                    metric_dict['hostname']=hostname
                     metric_dict['timestamp']=timestamp
                     result_list.append(metric_dict)
         writeES(result_list,section)  
@@ -130,6 +117,7 @@ if __name__ == '__main__':
     port=pars.getint(section,"port")
     interval=pars.getint(section,"interval")
     query_list = json.loads(pars.get(section,'query'))
+    jconn_dict={}
     if hosts:
         try:
             load_JVM()
@@ -145,6 +133,8 @@ if __name__ == '__main__':
                     mbean_dict[str(mbean.name)]=item['attributes']
             else:
                 mbean_dict[item['object_name']]=item['attributes']
-        loop(interval,hosts,port,mbean_dict,section)
+        for host in hosts:
+            jconn_dict[host]=Jmxes(host,port)
+        loop(interval,jconn_dict,mbean_dict,section)
     else:
         print "Please edit parameter file 'jmx_pars.ini'"
